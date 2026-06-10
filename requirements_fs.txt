@@ -3,4 +3,4 @@ transformations
 timm
 einops
 huggingface-hub
-xformers==0.0.29.post2 # torch 2.6.0 cuda 12.4
+#xformers==0.0.29.post2 # torch 2.6.0 cuda 12.4

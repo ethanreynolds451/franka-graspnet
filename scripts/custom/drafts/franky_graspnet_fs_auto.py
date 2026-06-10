@@ -5,6 +5,7 @@ import sys
 import os
 import traceback
 import cv2
+import time
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(ROOT_DIR, '..'))
@@ -38,7 +39,7 @@ def main():
 
     # FS
     parser.add_argument('--fs_ckpt_dir', type=str, default='./checkpoints/foundation_stereo/11-33-40/model_best_bp2.pth')
-    parser.add_argument('--baseline', type=float, default=0.05)
+    parser.add_argument('--baseline', type=float, default=None)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--scale', default=1, type=float)
     parser.add_argument('--hiera', default=0, type=int)
@@ -59,6 +60,11 @@ def main():
         traceback.print_exc()
         sys.exit(1)
     
+    # Read the baseline from the camera if it is not specified
+    if args.baseline is None:
+        # Read baseline from the camera if not specified
+        args.baseline = rs_dev.get_stereo_baseline()
+
     # IR to Color
     R_ir2color, T_ir2color = rs_dev.get_ir2color()
     # Color Intrinsics
@@ -84,10 +90,17 @@ def main():
     workspace_mask = create_rect_mask((args.height, args.width), (200, 0), (1150, 600))
 
     print("Start real-time grasp prediction ...")
+
+    # Create a visualization window
+#    vis = o3d.visualization.Visualizer()
+#    vis.create_window(visible=True)
+    
     try:
         while True:
             res = rs_dev.get_frames()
             if res is None:
+                print("Unable to retrieve camera frames")
+                time.sleep(0.1)
                 continue
             color_image, depth_raw, left_rgb, right_rgb, K_left = res
 
@@ -102,7 +115,7 @@ def main():
                 color_vis = color_image.copy()
 
             depth_m, valid_mask, K_scaled = fs.infer_depth(left_rgb, right_rgb, K_left, scale=scale)
-
+            
             depth_m[np.isinf(depth_m)] = 0
             depth_m[depth_m > 1.2] = 0
             valid_mask = valid_mask & (depth_m > 0) & (depth_m <= args.z_far) & (workspace_mask > 0)
@@ -141,23 +154,56 @@ def main():
 
             end_points, cloud = graspnet_infer.process_fs_data(pts_keep, colors_keep)
 
-            target_gg = graspnet_infer.predict_grasps(end_points, cloud)
+            try:
+                target_gg = graspnet_infer.predict_grasps(end_points, cloud)
+            except IndexError:
+                # Workaround to avoid modifying the function in grasp generation file
+                # When there are no grasps left, it attempts to access the element at the zero index of an unpopulated list of ranked grasps
+                print("All objects have been placed")
+                break
 
             grippers = target_gg.to_open3d_geometry_list()
             T = np.diag([1, 1, -1, 1])
             cloud.transform(T)
             for g in grippers:
                 g.transform(T)
-            o3d.visualization.draw_geometries([cloud, *grippers])
+                  
+            # o3d.visualization.draw_geometries([cloud, *grippers])
+            
+            ### Modified: show the window but proceed automatically
+            
+#            vis.clear_geometries()        
+#            vis.poll_events()
+#            vis.update_renderer()
+#        
+#            vis.add_geometry(cloud)
+#            for g in grippers:
+#                vis.add_geometry(g)
+#
+#            vis.poll_events()
+#            vis.update_renderer()
+#
+#            for _ in range(120):
+#                vis.poll_events()
+#                vis.update_renderer()
 
-            target_pose_base = fr3_robot.compute_target_pose(target_gg[0])
+            ###
+            
+            target_pose_base = fr3_robot.compute_target_pose(target_gg[0])     
 
             fr3_robot.execute_grasp(target_pose_base)
 
+        # Successful completion
+#        vis.destroy_window()
+        
     except KeyboardInterrupt:
         print("Exit demo.")
         rs_dev.stop()
-
+        
+    except Exception as e: 
+        print("An unexpected error, has ocurred, exiting program:", e)
+        rs_dev.stop()
+        raise
 
 if __name__ == "__main__":
     main()

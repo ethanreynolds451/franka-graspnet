@@ -64,6 +64,11 @@ class StereoCameraIR:
         except Exception:
             pass
 
+    def get_stereo_baseline(self):
+        left_profile = self.profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
+        right_profile = self.profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
+        extrin = left_profile.get_extrinsics_to(right_profile)
+        return abs(extrin.translation[0])  # meters
 
     def get_ir2color(self):
         # IR -> COLOR extrinsics

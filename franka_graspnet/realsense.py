@@ -68,7 +68,7 @@ class RGBDCamera:
         # get intrinsic parameters
         rgb_intrinsics, rgb_coeffs, depth_intrinsics, depth_coeffs = self.get_intrinsics_matrix()
         depth_scale = self.get_depth_scale()
-
+        
         rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
             o3d.geometry.Image(color_image),
             o3d.geometry.Image(depth_image),

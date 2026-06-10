@@ -50,7 +50,7 @@ class GraspNetInfer:
             scale=1.0
         )
 
-        # 1. 生成点云
+        # 1. 生成点云   generate point cloud
         cloud = create_point_cloud_from_depth_image(depth_image, camera_info, organized=True)
 
         if workspace_mask is None:
@@ -61,7 +61,7 @@ class GraspNetInfer:
         cloud_masked = cloud[mask]
         color_masked = rgb_image[mask]
 
-        # 2. 平面过滤 (RANSAC)
+        # 2. 平面过滤 (RANSAC)          planar filtration, removes points too far from main plane
         if plane_remove and len(cloud_masked) > 100:
             cloud_o3d_tmp = o3d.geometry.PointCloud()
             cloud_o3d_tmp.points = o3d.utility.Vector3dVector(cloud_masked.astype(np.float32))
@@ -69,11 +69,11 @@ class GraspNetInfer:
                                                             ransac_n=3,
                                                             num_iterations=1000)
             inliers = np.array(inliers)
-            # 保留靠近平面的 inliers，剔除远点
+            # 保留靠近平面的 inliers，剔除远点      preserve inliers close to the plne but discard points far away
             cloud_masked = cloud_masked[inliers]
             color_masked = color_masked[inliers]
 
-        # 3. 采样
+        # 3. 采样           sample points
         num_point = self.num_point
         if len(cloud_masked) >= num_point:
             idxs = np.random.choice(len(cloud_masked), num_point, replace=False)
@@ -85,12 +85,12 @@ class GraspNetInfer:
         cloud_sampled = cloud_masked[idxs]
         color_sampled = color_masked[idxs]
 
-        # 4. Open3D 点云 (可视化用)
+        # 4. Open3D 点云 (可视化用)     generate point cloud for visualization
         cloud_o3d = o3d.geometry.PointCloud()
         cloud_o3d.points = o3d.utility.Vector3dVector(cloud_masked.astype(np.float32))
         cloud_o3d.colors = o3d.utility.Vector3dVector(color_masked.astype(np.float32))
 
-        # 5. 转 torch (GraspNet 输入)
+        # 5. 转 torch (GraspNet 输入)       convert graspnet input to torch format
         cloud_sampled = torch.from_numpy(cloud_sampled[np.newaxis].astype(np.float32))
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         cloud_sampled = cloud_sampled.to(device)
@@ -101,8 +101,8 @@ class GraspNetInfer:
         return end_points, cloud_o3d
     
     def process_fs_data(self, points, pts_colors):
-        
-        # 3. 采样
+        # pasos 1 y 2 ya se completan con FS
+        # 3. 采样           sample points      
         num_point = self.num_point
         if len(points) >= num_point:
             idxs = np.random.choice(len(points), num_point, replace=False)
@@ -114,12 +114,12 @@ class GraspNetInfer:
         cloud_sampled = points[idxs]
         color_sampled = pts_colors[idxs]
 
-        # 4. Open3D 点云 (可视化用)
+        # 4. Open3D 点云 (可视化用)     point cloud for visualization and colision detection
         cloud_o3d = o3d.geometry.PointCloud()
         cloud_o3d.points = o3d.utility.Vector3dVector(points.astype(np.float32))
         cloud_o3d.colors = o3d.utility.Vector3dVector(pts_colors.astype(np.float32))
 
-        # 5. 转 torch (GraspNet 输入)
+        # 5. 转 torch (GraspNet 输入)  convert from NumPy to Tensor for torch / graspnet input
         cloud_sampled = torch.from_numpy(cloud_sampled[np.newaxis].astype(np.float32))
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         cloud_sampled = cloud_sampled.to(device)
@@ -141,25 +141,37 @@ class GraspNetInfer:
         Returns:
             GraspGroup: 最佳抓取预测结果
         """
-        # 1. 前向推理
+        """
+        Predecir la pose de agarre
+
+        Argumentos:
+        end_points: Diccionario de datos de la nube de puntos
+        cloud: Objeto de nube de puntos de Open3D
+        visual: Indica si se debe visualizar el resultado
+
+        Retorno:
+        GraspGroup: Resultado de la predicción del mejor agarre
+        """
+        # 1. 前向推理       forward inference
         with torch.no_grad():
             end_points = self.net(end_points)
             grasp_preds = pred_decode(end_points)
         gg = GraspGroup(grasp_preds[0].detach().cpu().numpy())
         
-        # 2. 碰撞检测
+        # 2. 碰撞检测       collision detection
         if self.collision_thresh > 0:
             gg = self._collision_detection(gg, cloud)
         
-        # 3. NMS去重 + 按置信度排序
+        # 3. NMS去重 + 按置信度排序     duplicate removal with NMS and confidence sorting
         gg.nms().sort_by_score()
         
-        # 4. 垂直角度筛选
+        # 4. 垂直角度筛选               vertical angle filtering
         filtered_grasps = self._filter_by_vertical_angle(gg)
         
-        # 5. 选择最佳抓取
+        # 5. 选择最佳抓取               select single best grasp (or top k if !return_best)
         best_grasp_group = self._select_best_grasp(filtered_grasps, return_best)
         
+        # return group of best grasps
         return best_grasp_group
     
     def _collision_detection(self, grasp_group, cloud):

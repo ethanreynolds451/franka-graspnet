@@ -25,7 +25,7 @@ class FrankyShelfPickAndPlace:
         # Params
         self.robot = FrankaController(robot_ip="192.168.1.1")
         self.max_valid_depth = 0.5
-        self.workspace = ((self.args.height, self.args.width), (200, 0), (1150, 600))
+        self.workspace = ((self.args.height, self.args.width), (0, 0), (1150, 600))
         self.approach_axis = 'x'
         self.open_axis = 'y'
 
@@ -188,6 +188,16 @@ class FrankyShelfPickAndPlace:
         target_pose_base = self.robot.compute_target_pose(target_gg[0], self.approach_axis, self.open_axis)
         return target_pose_base   
 
+    def display_grasp(self, grasp, cloud):
+        # Create a visualization window with the current grasp pose in the 3D scene
+        grippers = grasp.to_open3d_geometry_list()
+        T = np.diag([1, 1, -1, 1])
+        cloud_vis = cloud
+        cloud_vis.transform(T)
+        for g in grippers:
+            g.transform(T)
+        o3d.visualization.draw_geometries([cloud_vis, *grippers])
+
 
     def run(self):
         print("Starting real-time pick-and-place ...")
@@ -203,6 +213,8 @@ class FrankyShelfPickAndPlace:
                 if not grasp: 
                     print("All objects have been placed")
                     break
+
+                self.display_grasp(grasp, cloud)
 
                 target_pose = self.get_target_pose(grasp, cloud)
 

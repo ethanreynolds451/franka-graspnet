@@ -8,8 +8,9 @@ import cv2
 import time
 
 # Note: added to subdirectory so needs to go up two levels
-ROOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
-sys.path.append(os.path.join(ROOT_DIR, '..'))
+# ROOT_DIR is now project directory, not scripts directory
+ROOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..')       
+sys.path.append(ROOT_DIR)
 from franka_graspnet.franka_controller import FrankaController
 from franka_graspnet.graspnet_infer import GraspNetInfer
 from franka_graspnet.stereo_realsense import StereoCameraIR
@@ -35,10 +36,10 @@ class FrankyShelfPickAndPlace:
         # Initialize graspnet
         self.graspnet_infer = graspnet_infer = GraspNetInfer(self.args)
         # Create workspace mask
-        self.workspace_mask = self.create_rect_mask(self.workspace)
+        self.workspace_mask = self.create_rect_mask(self.workspace[0], self.workspace[1], self.workspace[2])
 
     def parse_args(self):
-        self.parser.add_argument('--checkpoint_path', type=str, default="checkpoints/graspnet/checkpoint-rs.tar")
+        self.parser.add_argument('--checkpoint_path', type=str, default=os.path.join(ROOT_DIR, "checkpoints/graspnet/checkpoint-rs.tar"))
         self.parser.add_argument('--num_point', type=int, default=20000)
         self.parser.add_argument('--num_view', type=int, default=300)
         self.parser.add_argument('--collision_thresh', type=float, default=0.01)
@@ -50,7 +51,7 @@ class FrankyShelfPickAndPlace:
         self.parser.add_argument('--height', type=int, default=720)
 
         # FS
-        self.parser.add_argument('--fs_ckpt_dir', type=str, default='./checkpoints/foundation_stereo/11-33-40/model_best_bp2.pth')
+        self.parser.add_argument('--fs_ckpt_dir', type=str, default=os.path.join(ROOT_DIR, "checkpoints/foundation_stereo/11-33-40/model_best_bp2.pth"))
         self.parser.add_argument('--baseline', type=float, default=None)
         self.parser.add_argument('--device', type=str, default='cuda')
         self.parser.add_argument('--scale', default=1, type=float)
@@ -203,7 +204,7 @@ class FrankyShelfPickAndPlace:
                     print("All objects have been placed")
                     break
 
-                target_pose = self.get_target_pose(grasp)
+                target_pose = self.get_target_pose(grasp, cloud)
 
                 self.robot.execute_grasp(target_pose)
 

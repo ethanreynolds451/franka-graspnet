@@ -31,8 +31,8 @@ class FrankaController:
         
         # Added cartesian poses to make it easier to modify
         
-        T = np.array([0.50, 0.00, 0.30], dtype=np.float64)           # meters
-        q = np.array([0.5, 0.0, 1.0, 0.0], dtype=np.float64)         # (x,y,z,w) tool facing out
+        T = np.array([0.50, 0.00, 0.40], dtype=np.float64)               # meters
+        q = np.array([0.7071, 0.0, 0.7071, 0.0], dtype=np.float64)  # cámara arriba, apuntando +X
         home_affine = Affine(translation=T, quaternion=q)
         home_state  = CartesianState(home_affine)
         
@@ -42,7 +42,7 @@ class FrankaController:
         )
         
         T = np.array([0.30, 0.50, 0.30], dtype=np.float64)           # meters
-        q = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)         # (x,y,z,w) tool facing down
+        q = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)         # tool facing down (x, y, z, w)
         box_affine = Affine(translation=T, quaternion=q)
         box_state  = CartesianState(box_affine)
         

@@ -32,7 +32,7 @@ class FrankaController:
         # Added cartesian poses to make it easier to modify
         
         T = np.array([0.50, 0.00, 0.30], dtype=np.float64)           # meters
-        q = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)         # (x,y,z,w) tool facing down
+        q = np.array([0.5, 0.0, 1.0, 0.0], dtype=np.float64)         # (x,y,z,w) tool facing out
         home_affine = Affine(translation=T, quaternion=q)
         home_state  = CartesianState(home_affine)
         
@@ -114,7 +114,11 @@ class FrankaController:
             stop_event.wait(timeout=0.05)  # re-assert every 50 ms
 
 
-    def compute_target_pose(self, target_gg):
+    def compute_target_pose(self, target_gg, approach_axis, open_axis):
+        # Convert string input to index 
+        approach_axis_index = ['x', 'y', 'z'].index(approach_axis)
+        open_axis_index = ['x', 'y', 'z'].index(open_axis)
+
         # compute the target pose in base reference frame based on the GraspNet predictions and camera extrinsics
         """根据 GraspNet 预测和相机外参计算 Base 下目标位姿"""
         # Grasp pose in camera
@@ -140,8 +144,8 @@ class FrankaController:
         # -----------------------------
         # 构造 EE 旋转矩阵      construct end effector rotation matrix
         # -----------------------------
-        approach = R_grasp2camera[:, 0]  # GraspNet x = approach
-        open_dir = R_grasp2camera[:, 1]  # GraspNet y = open
+        approach = R_grasp2camera[:, approach_axis_index]  # GraspNet x = approach
+        open_dir = R_grasp2camera[:, open_axis_index]  # GraspNet y = open
         z_ee = approach
         y_ee = open_dir
         x_ee = np.cross(y_ee, z_ee)
@@ -152,10 +156,10 @@ class FrankaController:
 
         # === 保证 z 轴朝上，消除180度的二义性 ===   ensure the gripper faces downwards
         if R_target_base[2, 2] < 0:  # 如果 z 轴朝下
-            R_target_base = R_target_base @ R.from_euler("z", 180, degrees=True).as_matrix()
+            R_target_base = R_target_base @ R.from_euler(approach_axis, 180, degrees=True).as_matrix()
 
         # Pick the closest rotation solution to the current gripper orientation
-        R_flip = R.from_euler("z", 180, degrees=True).as_matrix()
+        R_flip = R.from_euler(approach_axis, 180, degrees=True).as_matrix()
         R_target_base_alt = R_target_base @ R_flip
         def _rot_angle(Ra, Rb):
             cos_a = (np.trace(Ra.T @ Rb) - 1) / 2

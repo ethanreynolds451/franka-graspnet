@@ -8,21 +8,34 @@ import cv2
 import time
 
 # Note: added to subdirectory so needs to go up two levels
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(ROOT_DIR, '../..'))
+ROOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+sys.path.append(os.path.join(ROOT_DIR, '..'))
 from franka_graspnet.franka_controller import FrankaController
 from franka_graspnet.graspnet_infer import GraspNetInfer
 from franka_graspnet.stereo_realsense import StereoCameraIR
 from foundation_stereo.fs_infer import FoundationStereoInfer
 
-class FrankyTablePickAndPlace:
+class FrankyShelfPickAndPlace:
     def __init__(self):
+        # Parse the input arguments
         self.parser = argparse.ArgumentParser()
         self.args = self.parse_args()
-        self.rs_dev, self.R_ir2color, self.T_ir2color, self.fx_c, self.fy_c, self.ppx_c, self.ppy_c, self.fs = self.init_camera()
+        
+        # Params
         self.robot = FrankaController(robot_ip="192.168.1.1")
-        self.init_robot()
-        self.graspnet_infer, self.workspace_mask = self.init_graspnet()
+        self.max_valid_depth = 0.5
+        self.workspace = ((self.args.height, self.args.width), (200, 0), (1150, 600))
+        self.approach_axis = 'x'
+        self.open_axis = 'y'
+
+        # Initialize the camrera
+        self.rs_dev, self.R_ir2color, self.T_ir2color, self.fx_c, self.fy_c, self.ppx_c, self.ppy_c, self.fs = self.init_camera()
+        # Initialize the robot
+        self.init_robot()   # Move to the home position
+        # Initialize graspnet
+        self.graspnet_infer = graspnet_infer = GraspNetInfer(self.args)
+        # Create workspace mask
+        self.workspace_mask = self.create_rect_mask(self.workspace)
 
     def parse_args(self):
         self.parser.add_argument('--checkpoint_path', type=str, default="checkpoints/graspnet/checkpoint-rs.tar")
@@ -85,12 +98,6 @@ class FrankyTablePickAndPlace:
         self.robot.move_home()
         self.robot.open_gripper()
 
-    def init_graspnet(self):
-        # === GraspNet Init ===
-        graspnet_infer = GraspNetInfer(self.args)
-        workspace_mask = self.create_rect_mask((self.args.height, self.args.width), (200, 0), (1150, 600))
-        return graspnet_infer, workspace_mask
-
     def create_rect_mask(self, image_shape, top_left, bottom_right):
         h, w = image_shape[:2]
         mask = np.zeros((h, w), dtype=bool)
@@ -122,7 +129,7 @@ class FrankyTablePickAndPlace:
         depth_m, valid_mask, K_scaled = self.fs.infer_depth(left_rgb, right_rgb, K_left, scale=scale)
         
         depth_m[np.isinf(depth_m)] = 0
-        depth_m[depth_m > 1.2] = 0
+        depth_m[depth_m > self.max_valid_depth] = 0
         valid_mask = valid_mask & (depth_m > 0) & (depth_m <= self.args.z_far) & (self.workspace_mask > 0)
         if np.any(valid_mask):
             print(f"Depth min/max (valid only): {depth_m[valid_mask].min():.3f}/{depth_m[valid_mask].max():.3f}")
@@ -177,7 +184,7 @@ class FrankyTablePickAndPlace:
         cloud.transform(T)
         for g in grippers:
             g.transform(T)  
-        target_pose_base = self.robot.compute_target_pose(target_gg[0])  
+        target_pose_base = self.robot.compute_target_pose(target_gg[0], self.approach_axis, self.open_axis)
         return target_pose_base   
 
 
@@ -211,5 +218,5 @@ class FrankyTablePickAndPlace:
             raise
 
 if __name__ == "__main__":
-    script = FrankyTablePickAndPlace()
+    script = FrankyShelfPickAndPlace()
     script.run()

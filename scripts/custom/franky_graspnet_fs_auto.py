@@ -101,84 +101,104 @@ class FrankyTablePickAndPlace:
         mask[y1:y2, x1:x2] = True
         return mask
 
+    def process_camera_frames(self):
+        res = self.rs_dev.get_frames()
+        if res is None:
+            print("Unable to retrieve camera frames")
+            time.sleep(0.1)
+            return None, None
+        color_image, depth_raw, left_rgb, right_rgb, K_left = res
+
+        scale = float(self.args.scale)
+        H0,W0 = left_rgb.shape[:2]
+        newW,newH = int(W0*scale), int(H0*scale)
+        if scale != 1.0:
+            left_rgb = cv2.resize(left_rgb,(newW,newH))
+            right_rgb = cv2.resize(right_rgb,(newW,newH))
+            color_vis = cv2.resize(color_image,(newW,newH))
+        else:
+            color_vis = color_image.copy()
+
+        depth_m, valid_mask, K_scaled = self.fs.infer_depth(left_rgb, right_rgb, K_left, scale=scale)
+        
+        depth_m[np.isinf(depth_m)] = 0
+        depth_m[depth_m > 1.2] = 0
+        valid_mask = valid_mask & (depth_m > 0) & (depth_m <= self.args.z_far) & (self.workspace_mask > 0)
+        if np.any(valid_mask):
+            print(f"Depth min/max (valid only): {depth_m[valid_mask].min():.3f}/{depth_m[valid_mask].max():.3f}")
+
+        H, W = depth_m.shape
+        xx, yy = np.meshgrid(np.arange(W), np.arange(H))
+        z = depth_m
+
+        fx = K_scaled[0,0]; ppx = K_scaled[0,2]
+        fy = K_scaled[1,1]; ppy = K_scaled[1,2]
+        x = (xx - ppx) / fx * z
+        y = (yy - ppy) / fy * z
+        points_ir = np.stack([x, y, z], axis=-1).reshape(-1,3)
+        mask_flat = valid_mask.reshape(-1)
+
+        # transform LEFT IR points to Color
+        points_color = (self.R_ir2color @ points_ir.T).T + self.T_ir2color
+
+        # project to color image
+        pts_z = points_color[:,2]
+        valid_z = pts_z > 1e-6
+        u = (points_color[:,0] / np.where(valid_z, pts_z, 1.0)) * self.fx_c + self.ppx_c
+        v = (points_color[:,1] / np.where(valid_z, pts_z, 1.0)) * self.fy_c + self.ppy_c
+        u_int = np.round(u).astype(np.int32)
+        v_int = np.round(v).astype(np.int32)
+
+        in_bounds = (u_int >= 0) & (u_int < color_vis.shape[1]) & (v_int >= 0) & (v_int < color_vis.shape[0]) & valid_z
+        final_mask = mask_flat & in_bounds
+        idxs = np.where(final_mask)[0]
+
+        pts_keep = points_color[idxs]
+        u_sel = u_int[idxs]; v_sel = v_int[idxs]
+        colors_keep = cv2.cvtColor(color_vis, cv2.COLOR_BGR2RGB)[v_sel, u_sel, :].astype(np.float32) / 255.0
+        
+        end_points, cloud = self.graspnet_infer.process_fs_data(pts_keep, colors_keep)
+        
+        return end_points, cloud
+    
+    
+    def get_grasp(self, end_points, cloud):
+        try:
+            target_gg = self.graspnet_infer.predict_grasps(end_points, cloud)
+            return target_gg
+        except IndexError:
+            # Workaround to avoid modifying the function in grasp generation file
+            # When there are no grasps left, it attempts to access the element at the zero index of an unpopulated list of ranked grasps
+            return None
+
+    def get_target_pose(self, target_gg, cloud):
+        grippers = target_gg.to_open3d_geometry_list()
+        T = np.diag([1, 1, -1, 1])
+        cloud.transform(T)
+        for g in grippers:
+            g.transform(T)  
+        target_pose_base = self.robot.compute_target_pose(target_gg[0])  
+        return target_pose_base   
+
+
     def run(self):
         print("Starting real-time pick-and-place ...")
         try:
             while True:
-                res = self.rs_dev.get_frames()
-                if res is None:
-                    print("Unable to retrieve camera frames")
-                    time.sleep(0.1)
+                end_points, cloud = self.process_camera_frames()
+
+                if end_points is None or cloud is None:
                     continue
-                color_image, depth_raw, left_rgb, right_rgb, K_left = res
 
-                scale = float(self.args.scale)
-                H0,W0 = left_rgb.shape[:2]
-                newW,newH = int(W0*scale), int(H0*scale)
-                if scale != 1.0:
-                    left_rgb = cv2.resize(left_rgb,(newW,newH))
-                    right_rgb = cv2.resize(right_rgb,(newW,newH))
-                    color_vis = cv2.resize(color_image,(newW,newH))
-                else:
-                    color_vis = color_image.copy()
+                grasp = self.get_grasp(end_points, cloud)
 
-                depth_m, valid_mask, K_scaled = self.fs.infer_depth(left_rgb, right_rgb, K_left, scale=scale)
-                
-                depth_m[np.isinf(depth_m)] = 0
-                depth_m[depth_m > 1.2] = 0
-                valid_mask = valid_mask & (depth_m > 0) & (depth_m <= self.args.z_far) & (self.workspace_mask > 0)
-                if np.any(valid_mask):
-                    print(f"Depth min/max (valid only): {depth_m[valid_mask].min():.3f}/{depth_m[valid_mask].max():.3f}")
-
-                H, W = depth_m.shape
-                xx, yy = np.meshgrid(np.arange(W), np.arange(H))
-                z = depth_m
-
-                fx = K_scaled[0,0]; ppx = K_scaled[0,2]
-                fy = K_scaled[1,1]; ppy = K_scaled[1,2]
-                x = (xx - ppx) / fx * z
-                y = (yy - ppy) / fy * z
-                points_ir = np.stack([x, y, z], axis=-1).reshape(-1,3)
-                mask_flat = valid_mask.reshape(-1)
-
-                # transform LEFT IR points to Color
-                points_color = (self.R_ir2color @ points_ir.T).T + self.T_ir2color
-
-                # project to color image
-                pts_z = points_color[:,2]
-                valid_z = pts_z > 1e-6
-                u = (points_color[:,0] / np.where(valid_z, pts_z, 1.0)) * self.fx_c + self.ppx_c
-                v = (points_color[:,1] / np.where(valid_z, pts_z, 1.0)) * self.fy_c + self.ppy_c
-                u_int = np.round(u).astype(np.int32)
-                v_int = np.round(v).astype(np.int32)
-
-                in_bounds = (u_int >= 0) & (u_int < color_vis.shape[1]) & (v_int >= 0) & (v_int < color_vis.shape[0]) & valid_z
-                final_mask = mask_flat & in_bounds
-                idxs = np.where(final_mask)[0]
-
-                pts_keep = points_color[idxs]
-                u_sel = u_int[idxs]; v_sel = v_int[idxs]
-                colors_keep = cv2.cvtColor(color_vis, cv2.COLOR_BGR2RGB)[v_sel, u_sel, :].astype(np.float32) / 255.0
-
-                end_points, cloud = self.graspnet_infer.process_fs_data(pts_keep, colors_keep)
-
-                try:
-                    target_gg = self.graspnet_infer.predict_grasps(end_points, cloud)
-                except IndexError:
-                    # Workaround to avoid modifying the function in grasp generation file
-                    # When there are no grasps left, it attempts to access the element at the zero index of an unpopulated list of ranked grasps
+                if not grasp: 
                     print("All objects have been placed")
                     break
 
-                grippers = target_gg.to_open3d_geometry_list()
-                T = np.diag([1, 1, -1, 1])
-                cloud.transform(T)
-                for g in grippers:
-                    g.transform(T)
-                    
-                target_pose_base = self.robot.compute_target_pose(target_gg[0])     
+                target_pose = self.get_target_pose(grasp, cloud)
 
-                self.robot.execute_grasp(target_pose_base)
+                self.robot.execute_grasp(target_pose)
 
         except KeyboardInterrupt:
             print("Exit demo.")

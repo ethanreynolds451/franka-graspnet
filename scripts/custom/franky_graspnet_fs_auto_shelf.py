@@ -24,8 +24,8 @@ class FrankyShelfPickAndPlace:
         
         # Params
         self.robot = FrankaController(robot_ip="192.168.1.1")
-        self.max_valid_depth = 0.5
-        self.workspace = ((self.args.height, self.args.width), (0, 0), (1150, 600))
+        self.max_valid_depth = 0.75
+        self.workspace = ((self.args.height, self.args.width), (0, 120), (1280, 600))
         self.approach_axis = 'x'
         self.open_axis = 'y'
 

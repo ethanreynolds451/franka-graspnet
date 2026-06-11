@@ -31,7 +31,7 @@ class FrankaController:
         
         # Added cartesian poses to make it easier to modify
         
-        T = np.array([0.50, 0.00, 0.35], dtype=np.float64)               # meters
+        T = np.array([0.55, 0.00, 0.40], dtype=np.float64)               # meters
         q = np.array([0.7071, 0.0, 0.7071, 0.0], dtype=np.float64)  # cámara arriba, apuntando +X
         home_affine = Affine(translation=T, quaternion=q)
         home_state  = CartesianState(home_affine)
@@ -41,7 +41,7 @@ class FrankaController:
             reference_type=ReferenceType.Absolute,
         )
         
-        T = np.array([0.30, 0.40, 0.35], dtype=np.float64)           # meters
+        T = np.array([0.40, 0.40, 0.40], dtype=np.float64)           # meters
         q = np.array([0.7071, 0.0, 0.7071, 0.0], dtype=np.float64)  # cámara arriba, apuntando +X
         box_affine = Affine(translation=T, quaternion=q)
         box_state  = CartesianState(box_affine)
@@ -155,11 +155,13 @@ class FrankaController:
         R_target_base = R_ee_base @ R_target_ee
 
         # === 保证 z 轴朝上，消除180度的二义性 ===   ensure the gripper faces downwards
-        if R_target_base[2, approach_axis_index] < 0:  # Z component of approach direction
-            R_target_base = R_target_base @ R.from_euler(approach_axis, 180, degrees=True).as_matrix()
+        # approach is mapped to EE Z (column 2); check that it points down in world frame
+        if R_target_base[2, 2] > 0:  # EE Z (approach) pointing up in world
+            R_target_base = R_target_base @ R.from_euler('x', 180, degrees=True).as_matrix()
 
         # Pick the closest rotation solution to the current gripper orientation
-        R_flip = R.from_euler(approach_axis, 180, degrees=True).as_matrix()
+        # Symmetric gripper ambiguity is 180° around EE Z (approach axis) — preserves approach direction
+        R_flip = R.from_euler('z', 180, degrees=True).as_matrix()
         R_target_base_alt = R_target_base @ R_flip
         def _rot_angle(Ra, Rb):
             cos_a = (np.trace(Ra.T @ Rb) - 1) / 2

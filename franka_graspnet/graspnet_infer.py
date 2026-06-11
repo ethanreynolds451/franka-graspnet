@@ -22,6 +22,11 @@ class GraspNetInfer:
         self.voxel_size = cfgs.voxel_size
         self.collision_thresh = cfgs.collision_thresh
         self.angle_threshold_deg = cfgs.angle_threshold_deg
+        # Backward compatibility for older configs that don't have angle_threshold_deg
+        if hasattr(cfgs, 'rotation_angle_thresh_deg'):
+            self.rotation_threshold_deg = cfgs.rotation_angle_thresh_deg
+        else:
+            self.rotation_threshold_deg = None
         self.top_k_grasps = 20
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -167,6 +172,10 @@ class GraspNetInfer:
         
         # 4. 垂直角度筛选               vertical angle filtering
         filtered_grasps = self._filter_by_vertical_angle(gg)
+
+        if self.rotation_threshold_deg is not None:
+            # 4. 旋转角度筛选               rotation angle filtering
+            filtered_grasps = self._filter_by_rotation_angle(gg)
         
         # 5. 选择最佳抓取               select single best grasp (or top k if !return_best)
         best_grasp_group = self._select_best_grasp(filtered_grasps, return_best)
@@ -210,6 +219,32 @@ class GraspNetInfer:
         else:
             print(f"\nFiltered {len(filtered)} grasps within ±{self.angle_threshold_deg}° of vertical out of {len(all_grasps)} total predictions.")
         
+        return filtered
+    
+    def _filter_by_rotation_angle(self, grasp_group):
+        # how much the gripper can rotate around the approach axis (+/-)
+        all_grasps = list(grasp_group)
+        straight = np.array([1, 0, 0])  # desired closing axis direction (horizontal)
+        filtered = []
+
+        for grasp in all_grasps:
+            # closing axis of the gripper (column 1 of rotation matrix)
+            grasp_axis = grasp.rotation_matrix[:, 1]
+            cos_angle = np.dot(grasp_axis, straight)
+            cos_angle = np.clip(cos_angle, -1.0, 1.0)
+            angle = np.arccos(cos_angle)
+            # gripper is symmetric: 0° and 180° are equivalent poses
+            angle_symmetric = min(angle, np.pi - angle)
+
+            if angle_symmetric < np.deg2rad(self.rotation_threshold_deg):
+                filtered.append(grasp)
+
+        if len(filtered) == 0:
+            print(f"\n[Warning] No grasp predictions within rotation angle threshold. Using all predictions.")
+            filtered = all_grasps
+        else:
+            print(f"\nFiltered {len(filtered)} grasps within ±{self.rotation_threshold_deg}° of horizontal out of {len(all_grasps)} total predictions.")
+
         return filtered
     
     def _select_best_grasp(self, filtered_grasps, return_best=True):

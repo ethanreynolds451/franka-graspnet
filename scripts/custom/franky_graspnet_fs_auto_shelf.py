@@ -34,7 +34,7 @@ class FrankyShelfPickAndPlace:
         # Initialize the robot
         self.init_robot()   # Move to the home position
         # Initialize graspnet
-        self.graspnet_infer = graspnet_infer = GraspNetInfer(self.args)
+        self.graspnet_infer = GraspNetInfer(self.args)
         # Create workspace mask
         self.workspace_mask = self.create_rect_mask(self.workspace[0], self.workspace[1], self.workspace[2])
 
@@ -44,6 +44,7 @@ class FrankyShelfPickAndPlace:
         self.parser.add_argument('--num_view', type=int, default=300)
         self.parser.add_argument('--collision_thresh', type=float, default=0.01)
         self.parser.add_argument('--angle_threshold_deg', type=float, default=30)
+        self.parser.add_argument('--rotation_angle_thresh_deg', type=float, default=30)
         self.parser.add_argument('--voxel_size', type=float, default=0.01)
 
         # for camera

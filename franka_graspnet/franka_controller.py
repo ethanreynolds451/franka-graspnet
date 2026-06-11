@@ -100,12 +100,12 @@ class FrankaController:
             self.close_gripper(width=width, speed=speed, force=force)
             print("Error closing gripper")
 
-    def hold_grasp(self, force=80, speed=0.05, stop_event=None, ready_event=None):
+    def hold_grasp(self, force=80, speed=0.05, width=0.0, inner=0.08, outer=0.08, stop_event=None, ready_event=None):
         while not stop_event.is_set():
             try:
                 # epsilon params let grasp() succeed even if width drifts slightly
-                self.gripper.grasp(width=0.0, speed=speed, force=force,
-                                epsilon_inner=0.08, epsilon_outer=0.08)
+                self.gripper.grasp(width=width, speed=speed, force=force,
+                                epsilon_inner=inner, epsilon_outer=outer)
                 if ready_event:
                     ready_event.set()
             except (CommandException, ControlException) as e:
@@ -196,15 +196,35 @@ class FrankaController:
                         self.move_home()
                         return
 
+            # Move the gripper to the grasp position to deretmine width
+            self.gripper.move(width=0.0, speed=0.05)
+
+            # Retrieve the current width
+            current_width = self.gripper.width
+
+            if current_width < 0.01:
+                print("No object found at target position, attempting a new grasp.")
+                self.open_gripper()
+                self.move_home()
+                return
+
             # Start a thread to maintain a constant grasp force
             stop_grasp = threading.Event()
             grasp_ready = threading.Event()
             hold_thread = threading.Thread(
-                target=self.hold_grasp, args=(100, 0.05, stop_grasp, grasp_ready), daemon=True
+                target=self.hold_grasp, args=(80, 0.05, current_width, 0.005, 0.005, stop_grasp, grasp_ready), daemon=True
             )
             hold_thread.start()
 
             grasp_ready.wait(timeout=5.0)   # Wait until the grasp is held
+
+            if not grasp_ready.is_set():
+                print("Failed to establish a stable grasp, attempting a new grasp.")
+                stop_grasp.set()
+                hold_thread.join(timeout=2.0)
+                self.open_gripper()
+                self.move_home()
+                return
 
             self.move_box()
 
